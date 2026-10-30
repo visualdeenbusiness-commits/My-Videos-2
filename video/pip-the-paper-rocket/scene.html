@@ -1,0 +1,507 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pip the Paper Rocket</title>
+<style>html,body{margin:0;background:#000}canvas{display:block;width:100vw;height:auto}</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// Pip the Paper Rocket: 1920x1080 storybook animation.
+// render(t) draws the frame at t seconds; timings follow the pauses in
+// audio/pip-the-paper-rocket-voiceover.mp3.
+const W = 1920, H = 1080;
+const c = document.getElementById('c');
+c.width = W; c.height = H;
+const ctx = c.getContext('2d');
+
+const INK = '#3a2a2a';
+const FONT = 'Inter, "DejaVu Sans", sans-serif';
+
+// ---------- helpers ----------
+function rng(seed) { return () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }; }
+const clamp = (x, a = 0, b = 1) => Math.max(a, Math.min(b, x));
+const lerp = (a, b, k) => a + (b - a) * k;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const ease = k => k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+const easeOut = k => 1 - Math.pow(1 - k, 3);
+const easeIn = k => k * k;
+const backOut = k => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2); };
+
+function circle(x, y, r, fill, stroke, lw = 5) {
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function ellipse(x, y, rx, ry, fill, stroke, lw = 5, rot = 0) {
+  ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function star(x, y, r, fill, rot = 0, stroke) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = rot - Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * 0.45 : r;
+    ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 3; ctx.stroke(); }
+}
+function roundRect(x, y, w, h, r, fill, stroke, lw = 5) {
+  ctx.beginPath(); ctx.roundRect(x, y, w, h, r);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+function sparkle(x, y, r, alpha) {
+  if (alpha <= 0) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y);
+  ctx.fillStyle = '#fff7c9';
+  ctx.beginPath();
+  ctx.moveTo(0, -r); ctx.quadraticCurveTo(0, 0, r, 0); ctx.quadraticCurveTo(0, 0, 0, r);
+  ctx.quadraticCurveTo(0, 0, -r, 0); ctx.quadraticCurveTo(0, 0, 0, -r);
+  ctx.fill(); ctx.restore();
+}
+// Big comic word that pops in at t0 and fades out by t1.
+function popText(t, text, x, y, t0, t1, size, color, rot = 0) {
+  if (t < t0 || t > t1) return;
+  const k = backOut(seg(t, t0, t0 + 0.3));
+  const a = 1 - seg(t, t1 - 0.25, t1);
+  ctx.save(); ctx.globalAlpha = a; ctx.translate(x, y); ctx.rotate(rot); ctx.scale(k, k);
+  ctx.font = `900 ${size}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round'; ctx.lineWidth = size * 0.16; ctx.strokeStyle = INK;
+  ctx.strokeText(text, 0, 0); ctx.fillStyle = color; ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+// ---------- characters ----------
+// Pip: nose points up (-y) in local space. o.mood: 1 happy .. -1 sad.
+function drawPip(x, y, s, rot, o = {}) {
+  const mood = o.mood ?? 1, fin = o.fin ?? 1, blink = o.blink ?? 0;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(s, s);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  if (o.flame) {
+    const f = 1 + 0.25 * Math.sin(o.flame * 40);
+    ctx.beginPath(); ctx.moveTo(-20, 62); ctx.quadraticCurveTo(0, 62 + 90 * f, 20, 62); ctx.closePath();
+    ctx.fillStyle = '#ffb347'; ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-10, 62); ctx.quadraticCurveTo(0, 62 + 50 * f, 10, 62); ctx.closePath();
+    ctx.fillStyle = '#fff1a8'; ctx.fill();
+  }
+  // fins
+  for (const d of [-1, 1]) {
+    ctx.beginPath(); ctx.moveTo(d * 28, 5); ctx.lineTo(d * (30 + 40 * fin), 72 + 18 * fin); ctx.lineTo(d * 28, 62); ctx.closePath();
+    ctx.fillStyle = '#4aa3df'; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.stroke();
+    if (fin > 1.05) { // crisp fold line on the wing
+      ctx.save(); ctx.globalAlpha = clamp((fin - 1) * 2); ctx.strokeStyle = '#d8f0ff'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(d * 30, 20); ctx.lineTo(d * (28 + 32 * fin), 70 + 14 * fin); ctx.stroke(); ctx.restore();
+    }
+  }
+  // body
+  ctx.beginPath(); ctx.rect(-30, -52, 60, 117);
+  ctx.fillStyle = '#fffaf0'; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.stroke();
+  ctx.save(); ctx.strokeStyle = 'rgba(58,42,42,.18)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -52); ctx.lineTo(0, 65); ctx.stroke(); ctx.restore();
+  // nose
+  ctx.beginPath(); ctx.moveTo(-30, -52); ctx.lineTo(0, -112); ctx.lineTo(30, -52); ctx.closePath();
+  ctx.fillStyle = '#e8483b'; ctx.fill(); ctx.strokeStyle = INK; ctx.stroke();
+  // crayon stars
+  star(-14, 42, 9, '#f5c542', 0.2); star(15, 30, 7, '#f5c542', -0.3); star(12, 52, 5, '#f08fb0');
+  // face
+  const ey = -16, er = 7.5 * (1 + 0.15 * clamp(mood));
+  for (const d of [-1, 1]) {
+    ellipse(d * 12, ey, er * 0.8, er * (1 - blink * 0.9), INK);
+    if (blink < 0.5) circle(d * 12 + 2, ey - 3, 2.2, '#fff');
+    if (mood < 0) { // worried brows
+      ctx.strokeStyle = INK; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.moveTo(d * 5, ey - 14 + mood * 2); ctx.lineTo(d * 19, ey - 13 - mood * 4); ctx.stroke();
+    }
+  }
+  if (mood > 0.2) { ellipse(-20, 2, 6, 4, 'rgba(240,120,140,.55)'); ellipse(20, 2, 6, 4, 'rgba(240,120,140,.55)'); }
+  ctx.strokeStyle = INK; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-10, 4); ctx.quadraticCurveTo(0, 4 + 14 * mood, 10, 4); ctx.stroke();
+  ctx.restore();
+}
+
+const SKIN = '#f0c09a', PJ = '#8fc6ef', HAIR = '#4a2c1d';
+function arm(x0, y0, x1, y1) {
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = INK; ctx.lineWidth = 48; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.strokeStyle = PJ; ctx.lineWidth = 38; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+}
+// Mia faces the viewer. o.hand / o.hand2 are world positions for her hands.
+function drawMia(x, y, s, o = {}) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.lineJoin = 'round';
+  const toLocal = p => [(p[0] - x) / s, (p[1] - y) / s];
+  // pigtails + back hair
+  circle(-102, 25, 40, HAIR, INK); circle(102, 25, 40, HAIR, INK);
+  // body
+  ctx.beginPath(); ctx.moveTo(-60, 82); ctx.quadraticCurveTo(-150, 110, -155, 470); ctx.lineTo(155, 470);
+  ctx.quadraticCurveTo(150, 110, 60, 82); ctx.closePath();
+  ctx.fillStyle = PJ; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.stroke();
+  for (const [sx, sy] of [[-70, 200], [60, 170], [10, 300], [-90, 360], [90, 330]]) star(sx, sy, 14, '#fff', 0.3);
+  // head
+  circle(0, 10, 80, SKIN, INK);
+  ctx.beginPath(); ctx.arc(0, 10, 82, Math.PI, 0);
+  ctx.quadraticCurveTo(45, -30, 0, -22); ctx.quadraticCurveTo(-45, -30, -82, 10);
+  ctx.fillStyle = HAIR; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.stroke();
+  // face
+  const blink = o.blink ?? 0;
+  for (const d of [-1, 1]) {
+    ellipse(d * 28, 18, 8, 11 * (1 - blink * 0.9), INK);
+    if (blink < 0.5) circle(d * 28 + 3, 14, 3, '#fff');
+  }
+  ellipse(-48, 42, 12, 7, 'rgba(240,110,130,.5)'); ellipse(48, 42, 12, 7, 'rgba(240,110,130,.5)');
+  ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-18, 46); ctx.quadraticCurveTo(0, 64, 18, 46); ctx.stroke();
+  // arms
+  const hands = [];
+  const h1 = o.hand ? toLocal(o.hand) : [-165, 400];
+  const left = h1[0] < 0;
+  arm(left ? -110 : 110, 140, h1[0], h1[1]); hands.push(h1);
+  let h2;
+  if (o.wave != null) h2 = [190, -40 + Math.sin(o.wave * 9) * 25];
+  else h2 = o.hand2 ? toLocal(o.hand2) : [left ? 165 : -165, 400];
+  arm(left ? 110 : -110, 140, h2[0], h2[1]); hands.push(h2);
+  if (!o.holding) for (const h of hands) circle(h[0], h[1], 26, SKIN, INK);
+  ctx.restore();
+}
+// Hand drawn on top of Pip so it looks like Mia is holding him.
+function drawHand(x, y, s) { circle(x, y, 26 * s, SKIN, INK, 5 * s); }
+
+// ---------- backgrounds ----------
+const skyStars = (() => { const r = rng(7); return Array.from({ length: 160 }, () => [r(), r(), r() * 6.28, 1 + r() * 2.5]); })();
+function drawSky(x, y, w, h, t, starScale = 1) {
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, '#0b1a3f'); g.addColorStop(1, '#2d4a8a');
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  for (const [sx, sy, ph, r] of skyStars) {
+    ctx.globalAlpha = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(t * 2.5 + ph));
+    circle(x + sx * w, y + sy * h, r * starScale, '#fffbe0');
+  }
+  ctx.globalAlpha = 1;
+}
+function drawMoon(x, y, r, o = {}) {
+  const g = ctx.createRadialGradient(x, y, r * 0.8, x, y, r * 2.2);
+  g.addColorStop(0, 'rgba(255,244,190,.45)'); g.addColorStop(1, 'rgba(255,244,190,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 2.2, 0, Math.PI * 2); ctx.fill();
+  circle(x, y, r, '#fff1b8', '#e8cf7a', r * 0.05);
+  circle(x - r * 0.4, y - r * 0.35, r * 0.13, 'rgba(220,190,110,.35)');
+  circle(x + r * 0.45, y + r * 0.1, r * 0.09, 'rgba(220,190,110,.35)');
+  circle(x - r * 0.1, y + r * 0.5, r * 0.11, 'rgba(220,190,110,.35)');
+  if (o.face) {
+    const open = o.open ?? 1, smile = o.smile ?? 0.3, wink = o.wink ?? 0;
+    ctx.strokeStyle = '#6b5530'; ctx.lineWidth = r * 0.05; ctx.lineCap = 'round';
+    for (const d of [-1, 1]) {
+      const ex = x + d * r * 0.32, ey = y - r * 0.08;
+      const shut = d === 1 ? Math.max(1 - open, wink) : 1 - open;
+      if (shut > 0.5) { ctx.beginPath(); ctx.arc(ex, ey - r * 0.04, r * 0.1, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke(); }
+      else { ellipse(ex, ey, r * 0.07, r * 0.1, '#6b5530'); circle(ex + r * 0.025, ey - r * 0.035, r * 0.025, '#fff'); }
+    }
+    ellipse(x - r * 0.55, y + r * 0.2, r * 0.13, r * 0.08, `rgba(240,140,140,${0.25 + 0.3 * smile})`);
+    ellipse(x + r * 0.55, y + r * 0.2, r * 0.13, r * 0.08, `rgba(240,140,140,${0.25 + 0.3 * smile})`);
+    ctx.beginPath(); ctx.moveTo(x - r * 0.25, y + r * 0.25);
+    ctx.quadraticCurveTo(x, y + r * (0.25 + 0.4 * smile), x + r * 0.25, y + r * 0.25); ctx.stroke();
+  }
+}
+function drawWall(x, y, w, h) {
+  const g = ctx.createRadialGradient(W * 0.45, H * 0.35, 100, W * 0.5, H * 0.5, W * 0.9);
+  g.addColorStop(0, '#6e5ca3'); g.addColorStop(1, '#3a2d63');
+  ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
+  const r = rng(3);
+  for (let i = 0; i < 70; i++) { ctx.globalAlpha = 0.12; star(x + r() * w, y + r() * h, 10 + r() * 8, '#fff', r() * 3); }
+  ctx.globalAlpha = 1;
+}
+function drawWindow(x, y, w, h, t, moon, open = false) {
+  ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  drawSky(x, y, w, h, t, 1.1);
+  drawMoon(moon[0], moon[1], moon[2]);
+  ctx.restore();
+  ctx.strokeStyle = '#f3e3c3'; ctx.lineWidth = 22; ctx.strokeRect(x, y, w, h);
+  if (!open) {
+    ctx.lineWidth = 14; ctx.beginPath(); ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h);
+    ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2); ctx.stroke();
+  }
+  // curtains
+  for (const [cx, d] of [[x - 30, 1], [x + w + 30, -1]]) {
+    ctx.beginPath(); ctx.moveTo(cx - d * 60, y - 50); ctx.lineTo(cx + d * 70, y - 50);
+    ctx.quadraticCurveTo(cx + d * 10, y + h * 0.5, cx + d * 50, y + h + 40);
+    ctx.lineTo(cx - d * 60, y + h + 40); ctx.closePath();
+    ctx.fillStyle = '#e57f8a'; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.stroke();
+  }
+  roundRect(x - 120, y - 70, w + 240, 26, 13, '#c98b5a', INK);
+}
+function drawFloor(y0) {
+  ctx.fillStyle = '#8a5a3c'; ctx.fillRect(-400, y0, W + 800, H);
+  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 3;
+  for (let yy = y0 + 45; yy < H + 200; yy += 55) { ctx.beginPath(); ctx.moveTo(-400, yy); ctx.lineTo(W + 400, yy); ctx.stroke(); }
+  ctx.fillStyle = '#f3e3c3'; ctx.fillRect(-400, y0 - 14, W + 800, 18);
+}
+
+// ---------- scene 1+2: bedroom (0 – 10.2s) ----------
+function sceneRoom(t) {
+  const k = ease(seg(t, 4.1, 6.6));
+  const sc = lerp(1.42 + 0.06 * seg(t, 0, 4.1), 1.0, k);
+  const fx = lerp(830, 960, k), fy = lerp(400, 540, k);
+  ctx.save(); ctx.translate(W / 2, H / 2); ctx.scale(sc, sc); ctx.translate(-fx, -fy);
+
+  drawWall(-400, -400, W + 800, H + 800);
+  drawWindow(540, 130, 560, 410, t, [930, 270, 70]);
+  roundRect(480, 545, 680, 30, 8, '#c98b5a', INK);
+  drawFloor(880);
+  ellipse(960, 975, 430, 75, '#e5677d', INK);
+  ellipse(960, 975, 330, 52, null, '#f6b1bd', 8);
+  // bed
+  roundRect(1360, 600, 620, 290, 30, '#6fb7a8', INK);
+  roundRect(1420, 560, 200, 90, 40, '#fff', INK);
+  roundRect(1360, 700, 620, 40, 10, '#5aa294', INK);
+  for (const [bx, by] of [[1500, 790], [1700, 770], [1850, 820]]) star(bx, by, 18, '#f5c542', 0.4);
+
+  // Pip
+  let x = 760, y = 470, rot = 0.12, mood = 1, s = 0.9;
+  const blink = (t > 2.2 && t < 2.35) || (t > 5.3 && t < 5.45) ? 1 : 0;
+  y += Math.sin(t * 3) * 3;
+  if (t > 6.0 && t < 7.0) { const q = seg(t, 6.0, 7.0); y += 10 * Math.sin(q * Math.PI); rot += Math.sin(t * 25) * 0.06; }
+  if (t >= 7.0) { // whoosh up
+    const q = easeOut(seg(t, 7.0, 7.9));
+    x = lerp(760, 830, q); y = lerp(470, 300, q); rot = lerp(0.12, 0.35, q);
+  }
+  if (t >= 7.9) { // flutter down
+    const q = seg(t, 7.9, 8.65);
+    x = lerp(830, 930, q); y = lerp(300, 560, q) + Math.sin(q * Math.PI * 4) * 25;
+    rot = 0.35 + Math.sin(q * Math.PI * 5) * 0.5;
+  }
+  if (t >= 8.65) { // flop to the floor
+    const q = easeIn(seg(t, 8.65, 9.0));
+    x = lerp(930, 1010, q); y = lerp(560, 860, q); rot = lerp(0.6, 1.5, q);
+    mood = lerp(1, -1, seg(t, 8.8, 9.4));
+    if (t > 9.0) y -= Math.abs(Math.sin(seg(t, 9.0, 9.35) * Math.PI)) * 18;
+  }
+  if (t > 7.0 && t < 7.9) { // speed lines
+    ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 5;
+    for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(x + i * 22, y + 90); ctx.lineTo(x + i * 22 - 10, y + 150 + i * 10); ctx.stroke(); }
+  }
+  drawPip(x, y, s, rot, { mood, blink });
+  if (t > 9.0 && t < 9.8) { // dust puff
+    const q = seg(t, 9.0, 9.8);
+    ctx.globalAlpha = 1 - q;
+    for (const d of [-1, 1]) circle(1010 + d * (60 + 70 * q), 865 - 15 * q, 18 + 14 * q, '#e8d6c2');
+    ctx.globalAlpha = 1;
+  }
+  popText(t, 'Whoosh!', 1010, 250, 7.0, 7.95, 90, '#7fd3ff', -0.12);
+  popText(t, 'flutter…', 1130, 470, 7.9, 8.7, 70, '#fff3a8', 0.08);
+  popText(t, 'FLOP!', 1200, 760, 8.65, 10.1, 110, '#ff8a7a', -0.08);
+  ctx.restore();
+}
+
+// ---------- scene 3: Mia picks Pip up (10.2 – 17.5s) ----------
+function sceneRug(t) {
+  ctx.fillStyle = '#8a5a3c'; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.lineWidth = 4;
+  for (let yy = 40; yy < H; yy += 90) { ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(W, yy); ctx.stroke(); }
+  ellipse(1000, 760, 1150, 430, '#e5677d', INK, 6);
+  ellipse(1000, 760, 900, 320, null, '#f6b1bd', 14);
+  ellipse(1000, 760, 650, 220, null, '#f6b1bd', 10);
+  // soft moonbeam
+  ctx.save(); ctx.globalAlpha = 0.18; ctx.fillStyle = '#fff4c2';
+  ctx.beginPath(); ctx.moveTo(500, 0); ctx.lineTo(1000, 0); ctx.lineTo(1500, H); ctx.lineTo(700, H); ctx.closePath(); ctx.fill(); ctx.restore();
+
+  const lift = ease(seg(t, 13.6, 15.0));
+  const px = lerp(1080, 1180, lift), py = lerp(740, 520, lift) + (t > 15 ? Math.sin(t * 3) * 6 : 0);
+  const prot = lerp(1.5, 0.1, lift);
+  let mood = -1;
+  if (t > 15.7) mood = lerp(-1, 1, ease(seg(t, 15.7, 16.4)));
+  const sigh = t > 11.5 && t < 12.4 ? Math.sin(seg(t, 11.5, 12.4) * Math.PI) : 0;
+
+  const miaIn = easeOut(seg(t, 13.0, 14.2));
+  const mx = 560, my = lerp(1350, 560, miaIn);
+  const hand = [px - Math.sin(prot) * 60 * 2.1, py + Math.cos(prot) * 60 * 2.1];
+  if (miaIn > 0) drawMia(mx, my, 1.6, { hand: lift > 0 || t > 13.6 ? hand : [mx - 260, my + 640], holding: true, blink: t > 16.6 && t < 16.75 ? 1 : 0 });
+  drawPip(px, py + sigh * 10, 2.1, prot, { mood, blink: sigh > 0.5 ? 1 : 0 });
+  if (miaIn > 0) drawHand(hand[0], hand[1], 1.6);
+
+  if (sigh > 0) { // sigh puffs
+    ctx.globalAlpha = sigh * 0.8;
+    circle(px - 120, py - 120 - sigh * 30, 16, '#fff'); circle(px - 165, py - 160 - sigh * 40, 11, '#fff');
+    ctx.globalAlpha = 1;
+  }
+  // speech bubble
+  if (t > 15.5) {
+    const k = backOut(seg(t, 15.5, 15.85));
+    ctx.save(); ctx.translate(820, 220); ctx.scale(k, k);
+    roundRect(-330, -85, 660, 170, 85, '#fff', INK, 6);
+    ctx.beginPath(); ctx.moveTo(-180, 75); ctx.lineTo(-250, 160); ctx.lineTo(-110, 82); ctx.closePath();
+    ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.fillRect(-190, 70, 90, 14);
+    ctx.font = `800 60px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#e8483b';
+    ctx.fillText("Let's try together!", 0, 4);
+    ctx.restore();
+  }
+  if (t > 16.0) for (let i = 0; i < 5; i++) {
+    const a = t * 1.5 + i * 1.25;
+    sparkle(px + Math.cos(a) * 260, py + Math.sin(a) * 200, 26, 0.9 * seg(t, 16.0, 16.4));
+  }
+}
+
+// ---------- scene 4: fold, count, throw (17.5 – 24.6s) ----------
+function sceneThrow(t) {
+  drawWall(0, 0, W, H);
+  drawWindow(160, 170, 560, 470, t, [470, 320, 75], true);
+  roundRect(110, 640, 660, 30, 8, '#c98b5a', INK);
+  drawFloor(915);
+
+  const mx = 1400, my = 330, ms = 1.25;
+  // Pip pose: held up while folding, then wound back on the count.
+  let px = 1080, py = 420, rot = 0, s = 1.6;
+  const fin = 1 + 0.5 * ease(seg(t, 17.8, 19.8));
+  const wind = [[20.9, 1110, 340, -0.6], [21.5, 1140, 280, -0.9], [22.2, 1160, 230, -1.15]];
+  for (const [tw, wx, wy, wr] of wind) {
+    const q = ease(seg(t, tw, tw + 0.35));
+    if (q > 0) { px = lerp(px, wx, q); py = lerp(py, wy, q); rot = lerp(rot, wr, q); }
+  }
+  let flying = false, hand = null;
+  if (t >= 23.3) {
+    flying = true;
+    const q = seg(t, 23.3, 24.4);
+    const e = easeIn(q);
+    px = lerp(1160, 330, e); py = lerp(230, 300, e) - Math.sin(q * Math.PI) * 80;
+    rot = lerp(-1.15, -1.45, q); s = lerp(1.6, 0.35, e);
+    hand = [lerp(1160, 1080, ease(seg(t, 23.3, 23.6))), lerp(330, 400, ease(seg(t, 23.3, 23.6)))];
+  } else {
+    hand = [px - Math.sin(rot) * 60 * s, py + Math.cos(rot) * 60 * s];
+  }
+  drawMia(mx, my, ms, { hand, holding: !flying, blink: t > 19.3 && t < 19.45 ? 1 : 0 });
+  if (flying) {
+    drawHand(hand[0], hand[1], ms);
+    // sparkle trail
+    for (let i = 1; i <= 8; i++) {
+      const tq = seg(t - i * 0.05, 23.3, 24.4), e = easeIn(tq);
+      const tx = lerp(1160, 330, e), ty = lerp(230, 300, e) - Math.sin(tq * Math.PI) * 80;
+      sparkle(tx + 40, ty + 20, 22 - i * 2, (1 - i / 9) * (t < 24.4 ? 1 : 0));
+    }
+    // clip Pip to the window once he's past the frame edge
+    if (px < 760) { ctx.save(); ctx.beginPath(); ctx.rect(170, 180, 540, 450); ctx.clip(); }
+    drawPip(px, py, s, rot, { mood: 1, fin, flame: t });
+    if (px < 760) ctx.restore();
+  } else {
+    drawPip(px, py, s, rot, { mood: 1, fin, blink: t > 18.6 && t < 18.75 ? 1 : 0 });
+    drawHand(hand[0], hand[1], ms);
+  }
+  // fold sparkles on the wings
+  for (const [ts, dx] of [[18.1, -1], [18.9, 1], [19.6, -1]]) {
+    const a = Math.sin(seg(t, ts, ts + 0.6) * Math.PI);
+    if (!flying) sparkle(1080 + dx * 85, 520, 40, a);
+  }
+  popText(t, '1', 840, 190, 20.9, 21.5, 200, '#f5c542');
+  popText(t, '2', 840, 190, 21.5, 22.2, 200, '#7fd3ff');
+  popText(t, '3', 840, 190, 22.2, 23.3, 200, '#ff8a7a');
+  popText(t, 'WHOOSH!', 900, 190, 23.3, 24.6, 150, '#7fd3ff', -0.08);
+}
+
+// ---------- scene 5: up to the moon (24.6 – end) ----------
+function bez(p0, p1, p2, q) { return [lerp(lerp(p0[0], p1[0], q), lerp(p1[0], p2[0], q), q), lerp(lerp(p0[1], p1[1], q), lerp(p1[1], p2[1], q), q)]; }
+const P0 = [260, 1000], P1 = [520, 260], P2 = [1150, 360];
+function pipPath(t) { return bez(P0, P1, P2, ease(seg(t, 24.6, 28.3))); }
+function sceneSky(t) {
+  drawSky(0, 0, W, H, t);
+  const smile = lerp(0.15, 1, ease(seg(t, 26.9, 27.6)));
+  const wink = t > 27.9 && t < 28.4 ? 1 : 0;
+  drawMoon(1480, 330, 190, { face: true, open: t > 26.9 ? 1 : 0, smile, wink });
+  // clouds
+  for (const [cx, cy, r] of [[200, 1010, 140], [420, 1050, 120], [700, 1030, 150], [1000, 1060, 130], [1300, 1020, 160], [1620, 1050, 140], [1880, 1010, 150]])
+    circle(cx, cy, r, 'rgba(160,180,230,.85)');
+  // house + Mia waving in the lit window
+  roundRect(1540, 760, 330, 330, 0, '#6e5ca3', INK);
+  ctx.beginPath(); ctx.moveTo(1500, 770); ctx.lineTo(1705, 610); ctx.lineTo(1910, 770); ctx.closePath();
+  ctx.fillStyle = '#c94f5c'; ctx.fill(); ctx.strokeStyle = INK; ctx.lineWidth = 5; ctx.stroke();
+  ctx.save(); ctx.beginPath(); ctx.rect(1620, 820, 170, 150); ctx.clip();
+  ctx.fillStyle = '#ffe9a8'; ctx.fillRect(1620, 820, 170, 150);
+  drawMia(1705, 875, 0.42, { wave: t });
+  ctx.restore();
+  ctx.strokeStyle = '#f3e3c3'; ctx.lineWidth = 10; ctx.strokeRect(1620, 820, 170, 150);
+
+  // Pip's sparkle trail and flight
+  for (let i = 1; i <= 14; i++) {
+    const tt = t - i * 0.07; if (tt < 24.6) break;
+    const [sx, sy] = pipPath(tt);
+    sparkle(sx, sy + 30, 26 - i * 1.4, (1 - i / 15) * 0.95);
+  }
+  const [x, y] = pipPath(t);
+  const [nx, ny] = pipPath(t + 0.05);
+  let rot = Math.atan2(ny - y, nx - x) + Math.PI / 2;
+  if (t > 28.3) rot = 0.25 + Math.sin(t * 2.5) * 0.08;
+  const bob = t > 28.3 ? Math.sin(t * 3) * 10 : 0;
+  drawPip(x, y + bob, lerp(1.25, 0.95, seg(t, 24.6, 28.3)), rot, { mood: 1, flame: t < 28.5 ? t : 0, blink: t > 29.0 && t < 29.15 ? 1 : 0 });
+
+  if (t > 29.3) {
+    const k = backOut(seg(t, 29.3, 29.7));
+    ctx.save(); ctx.translate(780, 640); ctx.scale(k, k);
+    ctx.font = `900 150px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round'; ctx.lineWidth = 22; ctx.strokeStyle = INK; ctx.strokeText('The End!', 0, 0);
+    ctx.fillStyle = '#fff1b8'; ctx.fillText('The End!', 0, 0);
+    ctx.restore();
+    for (let i = 0; i < 6; i++) sparkle(780 + Math.cos(i + t) * 420, 640 + Math.sin(i * 2 + t) * 120, 24, seg(t, 29.4, 29.7));
+  }
+}
+
+// ---------- captions ----------
+const CAPTIONS = [
+  [0.0, 3.7, 'Pip was a little paper rocket who dreamed of reaching the moon.'],
+  [4.1, 9.6, 'Every night, Pip tried to fly. Whoosh… flutter… flop!'],
+  [10.2, 12.9, '“I’m just paper,” Pip sighed.'],
+  [13.2, 17.3, 'But Mia picked Pip up and whispered, “Let’s try together!”'],
+  [17.5, 20.6, 'She folded Pip’s wings strong and tall.'],
+  [20.9, 24.5, 'One, two, three… WHOOSH!'],
+  [24.6, 26.8, 'Pip flew higher than ever before.'],
+  [26.9, 29.2, 'And the moon smiled back.'],
+];
+function drawCaption(t) {
+  const cap = CAPTIONS.find(([a, b]) => t >= a && t < b);
+  if (!cap) return;
+  const a = Math.min(seg(t, cap[0], cap[0] + 0.2), 1 - seg(t, cap[1] - 0.2, cap[1]));
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.font = `700 46px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const w = ctx.measureText(cap[2]).width + 80;
+  roundRect(W / 2 - w / 2, 975, w, 76, 38, 'rgba(20,16,40,.72)');
+  ctx.fillStyle = '#fff'; ctx.fillText(cap[2], W / 2, 1014);
+  ctx.restore();
+}
+
+// paper grain for a storybook feel
+const grain = document.createElement('canvas');
+grain.width = 960; grain.height = 540;
+(() => {
+  const g = grain.getContext('2d'), r = rng(11);
+  for (let i = 0; i < 14000; i++) {
+    g.fillStyle = r() < 0.5 ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.5)';
+    g.fillRect(r() * 960, r() * 540, 1 + r() * 2, 1 + r() * 2);
+  }
+})();
+
+const CUTS = [10.2, 17.5, 24.6];
+function render(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  if (t < 10.2) sceneRoom(t);
+  else if (t < 17.5) sceneRug(t);
+  else if (t < 24.6) sceneThrow(t);
+  else sceneSky(t);
+  ctx.globalAlpha = 0.06; ctx.drawImage(grain, 0, 0, W, H); ctx.globalAlpha = 1;
+  drawCaption(t);
+  // dip-to-night between scenes, and a fade in at the start
+  let dip = 1 - seg(t, 0, 0.4);
+  for (const cut of CUTS) dip = Math.max(dip, 1 - Math.abs(t - cut) / 0.22);
+  if (dip > 0) { ctx.globalAlpha = dip; ctx.fillStyle = '#0b1a3f'; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; }
+}
+
+// Preview in a browser: plays along with the voiceover if ?play is set.
+if (location.search.includes('play')) {
+  const audio = new Audio('../../audio/pip-the-paper-rocket-voiceover.mp3');
+  document.body.onclick = () => audio.play();
+  (function loop() { render(audio.currentTime); requestAnimationFrame(loop); })();
+} else {
+  render(0);
+}
+</script>
+</body>
+</html>
